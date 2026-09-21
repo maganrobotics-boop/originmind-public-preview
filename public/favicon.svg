@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="OriginMind">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="6" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#13233b"/>
+      <stop offset="1" stop-color="#060b14"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="17" y1="15" x2="47" y2="49" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5f8ff"/>
+      <stop offset="1" stop-color="#9fb4d5"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="45" y1="43" x2="54" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38d6e5"/>
+      <stop offset="1" stop-color="#6f8cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <rect x=".75" y=".75" width="62.5" height="62.5" rx="15.25" fill="none" stroke="#99aed0" stroke-opacity=".18" stroke-width="1.5"/>
+  <circle cx="31" cy="31" r="15" fill="none" stroke="url(#ring)" stroke-width="5"/>
+  <path d="M18 24c5-9 18-13 28-5" fill="none" stroke="#6f8cff" stroke-linecap="round" stroke-width="2" opacity=".75"/>
+  <rect x="45" y="44" width="9" height="9" rx="2.5" fill="url(#signal)"/>
+</svg>

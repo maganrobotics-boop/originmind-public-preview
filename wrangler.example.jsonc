@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "originmind-public-chat",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-11",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "chat.omindos.ai/*",
+      "zone_name": "omindos.ai"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": [
+      "/*",
+      "!/assets/*",
+      "!/favicon.svg",
+      "!/LICENSES.md"
+    ]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "services": [
+    {
+      "binding": "OA_SERVICE",
+      "service": "originmind-internal-oa-staging"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "originmind-public-chat-production",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "APP_ORIGIN": "https://chat.omindos.ai",
+    "ADMIN_EMAIL": "administrator@omindos.ai",
+    "RELEASE_ID": "development"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

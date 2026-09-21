@@ -1,0 +1,64 @@
+name: Initialize Chat administrator manually
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type exactly: originmind-public-chat-production:initialize-admin:chat.omindos.ai'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  reject-invalid-dispatch:
+    if: >-
+      github.repository != 'maganrobotics-boop/originmind-oa' ||
+      github.ref != 'refs/heads/main' ||
+      inputs.confirmation != 'originmind-public-chat-production:initialize-admin:chat.omindos.ai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Reject an unauthorized administrator initialization
+        run: exit 64
+
+  initialize:
+    if: >-
+      github.repository == 'maganrobotics-boop/originmind-oa' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirmation == 'originmind-public-chat-production:initialize-admin:chat.omindos.ai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production-oa
+      url: https://chat.omindos.ai/manage
+    concurrency:
+      group: chat-cloudflare-production
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.OA_PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      CHAT_ADMIN_INITIALIZATION_CONFIRM: ${{ inputs.confirmation }}
+      WRANGLER_LOG_SANITIZE: 'true'
+      WRANGLER_SEND_METRICS: 'false'
+      CI: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: chat-cloudflare/package-lock.json
+      - name: Install locked Chat dependencies
+        run: npm ci --prefix chat-cloudflare
+      - name: Check the Chat Worker and administrator initialization controls
+        run: |
+          npm --prefix chat-cloudflare run check
+          node --test chat-cloudflare/scripts/*.test.mjs
+      - name: Initialize the existing production Chat administrator
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CHAT_ADMIN_PASSWORD: ${{ secrets.CHAT_ADMIN_PASSWORD }}
+        run: node chat-cloudflare/scripts/initialize-admin.mjs
