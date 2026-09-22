@@ -224,7 +224,6 @@ async function submitMessage(rawText) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         topic: "research",
-        analyticsSection: currentMode === "text" ? "research" : "general",
         messages: [{ role: "user", content: text || fileText }],
       }),
     });
