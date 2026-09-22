@@ -1,0 +1,157 @@
+name: Deploy Preview Frontend to Aliyun manually
+
+on:
+  workflow_dispatch:
+    inputs:
+      aliyun_host:
+        description: 'Aliyun server public IP or hostname'
+        required: true
+        default: '39.108.50.65'
+        type: string
+      aliyun_user:
+        description: 'SSH username'
+        required: true
+        default: 'root'
+        type: string
+      server_password:
+        description: 'SSH password, used once by this workflow run'
+        required: true
+        type: string
+      deploy_path:
+        description: 'Remote static frontend path'
+        required: true
+        default: '/var/www/originmind-preview'
+        type: string
+      server_name:
+        description: 'Optional hostname for port 80 access'
+        required: true
+        default: 'preview.omindos.cn'
+        type: string
+      api_upstream:
+        description: 'Cloudflare Worker origin that keeps using the existing data/API'
+        required: true
+        default: 'https://preview.omindos.ai'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: originmind-preview-aliyun
+      cancel-in-progress: false
+    env:
+      ALIYUN_HOST: ${{ inputs.aliyun_host }}
+      ALIYUN_USER: ${{ inputs.aliyun_user }}
+      ALIYUN_PASSWORD: ${{ inputs.server_password }}
+      DEPLOY_PATH: ${{ inputs.deploy_path }}
+      SERVER_NAME: ${{ inputs.server_name }}
+      API_UPSTREAM: ${{ inputs.api_upstream }}
+      CI: '1'
+    steps:
+      - name: Mask password
+        run: echo "::add-mask::$ALIYUN_PASSWORD"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build static frontend
+        run: npm run build:frontend
+
+      - name: Point static frontend at existing Cloudflare API
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          const apiBase = process.env.API_UPSTREAM.replace(/\/+$/u, '');
+          if (!/^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?$/u.test(apiBase)) {
+            throw new Error('api_upstream must be an https origin, for example https://preview.omindos.ai');
+          }
+          const path = 'public/index.html';
+          const html = await readFile(path, 'utf8');
+          const marker = '<script type="module" src="/assets/';
+          if (!html.includes(marker)) throw new Error('Cannot find frontend module script marker');
+          const config = `<script>window.PUBLIC_API_BASE=${JSON.stringify(apiBase)};</script>\n    `;
+          await writeFile(path, html.replace(marker, `${config}${marker}`));
+          NODE
+
+      - name: Package static frontend
+        run: tar -C public -czf /tmp/originmind-preview-public.tgz .
+
+      - name: Install SSH password helper
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Upload preview frontend to Aliyun
+        run: |
+          set -euo pipefail
+          sshpass -p "$ALIYUN_PASSWORD" ssh -o StrictHostKeyChecking=accept-new "$ALIYUN_USER@$ALIYUN_HOST" 'mkdir -p /tmp/originmind-preview-deploy'
+          sshpass -p "$ALIYUN_PASSWORD" scp -o StrictHostKeyChecking=accept-new /tmp/originmind-preview-public.tgz "$ALIYUN_USER@$ALIYUN_HOST:/tmp/originmind-preview-deploy/public.tgz"
+
+      - name: Install preview frontend on Aliyun
+        run: |
+          set -euo pipefail
+          sshpass -p "$ALIYUN_PASSWORD" ssh -o StrictHostKeyChecking=accept-new "$ALIYUN_USER@$ALIYUN_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' SERVER_NAME='$SERVER_NAME' API_UPSTREAM='$API_UPSTREAM' bash -s" <<'REMOTE'
+          set -euo pipefail
+          if ! command -v nginx >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y nginx
+            elif command -v yum >/dev/null 2>&1; then
+              yum install -y nginx
+            else
+              echo 'nginx is required but no supported package manager was found' >&2
+              exit 1
+            fi
+          fi
+          mkdir -p "$DEPLOY_PATH"
+          rm -rf "${DEPLOY_PATH:?}/"*
+          tar -xzf /tmp/originmind-preview-deploy/public.tgz -C "$DEPLOY_PATH"
+          chown -R root:root "$DEPLOY_PATH"
+          cat >/etc/nginx/conf.d/originmind-preview.conf <<NGINX
+          server {
+              listen 8080;
+              listen 80;
+              server_name ${SERVER_NAME};
+              root ${DEPLOY_PATH};
+              index index.html;
+
+              location /api/ {
+                  proxy_pass ${API_UPSTREAM}/api/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host \\$proxy_host;
+                  proxy_set_header X-Real-IP \\$remote_addr;
+                  proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \\$scheme;
+                  proxy_http_version 1.1;
+              }
+
+              location / {
+                  try_files \\$uri \\$uri/ /index.html;
+              }
+          }
+          NGINX
+          nginx -t
+          systemctl enable nginx >/dev/null 2>&1 || true
+          systemctl reload nginx || systemctl restart nginx
+          curl -fsS --max-time 10 http://127.0.0.1:8080/ | grep -Eq '实验室大模型|OriginMind'
+          REMOTE
+
+      - name: Smoke test public Aliyun preview IP
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 10 "http://$ALIYUN_HOST:8080/" | grep -Eq '实验室大模型|OriginMind'
