@@ -4,9 +4,10 @@ const KATEX_ASSET = "__KATEX_ASSET__";
 void KATEX_ASSET;
 
 const STORAGE_KEY = "originmind-public-preview-conversations-v1";
+const DEFAULT_PUBLIC_API_BASE = "https://chat.omindos.ai";
 const PUBLIC_API_BASE = typeof window.PUBLIC_API_BASE === "string" && window.PUBLIC_API_BASE.trim()
   ? window.PUBLIC_API_BASE.replace(/\/+$/u, "")
-  : "";
+  : DEFAULT_PUBLIC_API_BASE;
 const DEFAULT_SUGGESTIONS = [
   "实验室现有的机器人平台包括哪些？",
   "介绍实验室当前的主要研究方向",
