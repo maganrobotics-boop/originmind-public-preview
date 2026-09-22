@@ -36,7 +36,7 @@
     }
 
     .brand { display: flex; align-items: center; gap: 10px; height: 34px; padding-left: 10px; margin-bottom: 28px; }
-    .brand-symbol { flex: none; width: 23px; height: 23px; border-radius: 6px; background: linear-gradient(135deg,#4167ff,#22d4c9 52%,#8d5cff); transform: rotate(30deg) skew(-8deg); box-shadow: 0 5px 12px rgba(65,103,255,.18); }
+    .brand-symbol { flex: none; width: 31px; height: 22px; border-radius: 0; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 42'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='4' y1='8' x2='60' y2='34' gradientUnits='userSpaceOnUse'%3E%3Cstop stop-color='%231E7BFF'/%3E%3Cstop offset='.5' stop-color='%2300D1C8'/%3E%3Cstop offset='1' stop-color='%233565FF'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M19 31c-6 0-10-4-10-10S13 11 19 11c4 0 7 2 11 6l4 4 4-4c4-4 7-6 11-6 6 0 10 4 10 10s-4 10-10 10c-4 0-7-2-11-6l-4-4-4 4c-4 4-7 6-11 6Z' fill='none' stroke='url(%23a)' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M24 16l20 10' stroke='rgba(255,255,255,.55)' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat; box-shadow: none; }
     .brand-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.05; }
     .brand-title { color: #20232a; font-size: 14px; font-weight: 750; white-space: nowrap; }
     .brand-subtitle { color: #7b8089; font-size: 9px; font-weight: 650; letter-spacing: .075em; white-space: nowrap; }
@@ -587,7 +587,7 @@
       <div class="brand">
         <i class="brand-symbol" aria-hidden="true"></i>
         <div class="brand-copy">
-          <strong class="brand-title">实验室大模型</strong>
+          <strong class="brand-title">OriginMind</strong>
           <span class="brand-subtitle">ARTS Robotics</span>
         </div>
       </div>
@@ -879,7 +879,7 @@
       const item = document.createElement('article');
       item.className = `message ${role}`;
       if (role === 'assistant') {
-        item.innerHTML = `<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
         item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
       } else {
         item.innerHTML = '<div class="message-content"><p></p></div>';
@@ -894,7 +894,7 @@
     function addTyping() {
       const item = document.createElement('article');
       item.className = 'message assistant typing-message';
-      item.innerHTML = '<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
       messageList.appendChild(item);
       messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
       return item;
