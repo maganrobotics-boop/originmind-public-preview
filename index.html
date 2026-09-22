@@ -352,6 +352,7 @@
     }
 
     .message { display: flex; gap: 12px; margin: 0 0 24px; animation: message-in .28s ease both; }
+    .message.assistant { justify-content: center; }
     .message.user { justify-content: flex-end; }
 
     .assistant-mark {
@@ -371,6 +372,7 @@
     .mini-loader::after { bottom: 2px; background: linear-gradient(100deg,#6bb8fa,#9975ee); }
 
     .message-content { max-width: min(820px,88%); font-size: 15px; line-height: 1.76; color: #31353c; }
+    .message.assistant .message-content { width: min(820px,100%); }
     .message.assistant .message-content { padding-top: 1px; }
     .message.user .message-content { padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: #f1f1f2; color: #25282e; }
     .message-content p { margin: 0; white-space: pre-wrap; }
