@@ -374,6 +374,15 @@
     .message.assistant .message-content { padding-top: 1px; }
     .message.user .message-content { padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: #f1f1f2; color: #25282e; }
     .message-content p { margin: 0; white-space: pre-wrap; }
+    .answer-content { display: grid; gap: 10px; }
+    .answer-content p { margin: 0; white-space: normal; }
+    .answer-content h3 { margin: 2px 0 0; font-size: 16px; line-height: 1.55; color: #17191d; }
+    .answer-content strong { font-weight: 700; color: #17191d; }
+    .answer-content code { padding: 1px 5px; border-radius: 5px; background: #f1f3f5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+    .answer-content ol, .answer-content ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+    .answer-content table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 8px; font-size: 14px; }
+    .answer-content th, .answer-content td { border: 1px solid #e5e7eb; padding: 7px 9px; text-align: left; vertical-align: top; }
+    .answer-content th { background: #f7f8fa; color: #17191d; font-weight: 700; }
 
     .message-actions { display: flex; gap: 4px; margin-top: 7px; opacity: 0; transition: opacity .15s ease; }
     .message.assistant:hover .message-actions { opacity: 1; }
@@ -792,15 +801,72 @@
       return '<div class="message-actions"><button class="message-action copy-action" type="button" aria-label="复制"><svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2" stroke="currentColor" stroke-width="1.5"/></svg></button><button class="message-action" type="button" aria-label="喜欢"><svg viewBox="0 0 24 24" fill="none"><path d="M7 10v10H4V10h3zm0 9h9.5a2 2 0 001.9-1.4l1.5-5A2 2 0 0018 10h-4l.7-3.4A2.2 2.2 0 0012.5 4L7 10v9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button></div>';
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/gu, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    }
+
+    function inlineMarkdown(text) {
+      return escapeHtml(text)
+        .replace(/\*\*([^*]+)\*\*/gu, '<strong>$1</strong>')
+        .replace(/`([^`]+)`/gu, '<code>$1</code>');
+    }
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
     function addMessage(role, text) {
       const item = document.createElement('article');
       item.className = `message ${role}`;
       if (role === 'assistant') {
-        item.innerHTML = `<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><p></p>${messageActions()}</div>`;
+        item.innerHTML = `<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = renderMarkdown(text);
       } else {
         item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
       }
-      item.querySelector('p').textContent = text;
       messageList.appendChild(item);
       bindMessageActions(item);
       messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
@@ -818,7 +884,7 @@
 
     function bindMessageActions(scope) {
       scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
-        const text = button.closest('.message-content').querySelector('p').textContent;
+        const text = button.closest('.message-content').innerText.trim();
         try { await navigator.clipboard.writeText(text); showToast('已复制'); }
         catch { showToast('复制失败，请手动选择文本'); }
       }));
