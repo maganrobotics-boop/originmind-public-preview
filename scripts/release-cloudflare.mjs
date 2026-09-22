@@ -145,16 +145,17 @@ try {
     production: false,
     releaseId: environment.releaseId,
   });
-  const productionConfig = buildWranglerConfig({
-    accountId: environment.accountId,
-    adminEmail: environment.adminEmail,
-    databaseId: database.id,
-    oaWorkerName: environment.oaWorkerName,
-    configPath: productionConfigPath,
-    origin: PRODUCTION_ORIGIN,
-    production: true,
-    releaseId: environment.releaseId,
-  });
+const productionConfig = buildWranglerConfig({
+  accountId: environment.accountId,
+  adminEmail: environment.adminEmail,
+  databaseId: database.id,
+  oaWorkerName: environment.oaWorkerName,
+  configPath: productionConfigPath,
+  origin: PRODUCTION_ORIGIN,
+  production: true,
+  publicAllowedOrigins: process.env.PUBLIC_ALLOWED_ORIGINS || "https://maganrobotics-boop.github.io",
+  releaseId: environment.releaseId,
+});
   await writeJson(stagingConfigPath, stagingConfig);
   await writeJson(productionConfigPath, productionConfig);
   await writeJson(join(evidenceRoot, "target.json"), {
