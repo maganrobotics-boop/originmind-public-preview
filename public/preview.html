@@ -383,6 +383,10 @@
     .answer-content table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 8px; font-size: 14px; }
     .answer-content th, .answer-content td { border: 1px solid #e5e7eb; padding: 7px 9px; text-align: left; vertical-align: top; }
     .answer-content th { background: #f7f8fa; color: #17191d; font-weight: 700; }
+    .knowledge-gallery { display: grid; gap: 12px; margin-top: 4px; }
+    .knowledge-image { margin: 0; max-width: min(520px,100%); border: 1px solid #eceef2; border-radius: 10px; overflow: hidden; background: #fff; }
+    .knowledge-image img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: #f7f8fa; }
+    .knowledge-image figcaption { padding: 8px 10px; color: #6b7280; font-size: 12px; line-height: 1.45; border-top: 1px solid #eceef2; }
 
     .message-actions { display: flex; gap: 4px; margin-top: 7px; opacity: 0; transition: opacity .15s ease; }
     .message.assistant:hover .message-actions { opacity: 1; }
@@ -853,12 +857,30 @@
       return output.join('') || '<p>暂无内容。</p>';
     }
 
-    function addMessage(role, text) {
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
       const item = document.createElement('article');
       item.className = `message ${role}`;
       if (role === 'assistant') {
         item.innerHTML = `<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
-        item.querySelector('.answer-content').innerHTML = renderMarkdown(text);
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
       } else {
         item.innerHTML = '<div class="message-content"><p></p></div>';
         item.querySelector('p').textContent = text;
@@ -915,7 +937,7 @@
         const data = await response.json().catch(() => ({}));
         typing.remove();
         if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
-        addMessage('assistant', data.answer || '暂时没有生成回答。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
       } catch (error) {
         typing.remove();
         addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
