@@ -123,7 +123,7 @@ function appShell() {
   return `
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><div class="brand-symbol"></div><div class="brand-copy"><strong class="brand-title">实验室大模型</strong><span class="brand-subtitle">ARTS Robotics</span></div></div>
+      <div class="brand"><div class="brand-symbol" aria-label="OriginMind"></div><div class="brand-copy"><strong class="brand-title">OriginMind</strong><span class="brand-subtitle">ARTS Robotics</span></div></div>
       <div class="sidebar-label">置顶</div>
       <div class="nav-list">
         <button class="nav-item model-nav-item active" type="button" data-mode="text">${icons.text}<span>文本模型</span></button>
@@ -187,8 +187,8 @@ function messageActions() {
 function addMessage(role, text, { html = false, typing = false, images = [] } = {}) {
   const item = document.createElement("article");
   item.className = `message ${role}${typing ? " typing-message" : ""}`;
-  if (typing) item.innerHTML = '<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
-  else if (role === "assistant") item.innerHTML = `<div class="assistant-mark"><i class="mini-loader"></i></div><div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+  if (typing) item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+  else if (role === "assistant") item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
   else item.innerHTML = '<div class="message-content"><p></p></div>';
   if (!typing) {
     if (role === "assistant") item.querySelector(".answer-content").innerHTML = `${html ? text : renderMarkdown(text)}${renderKnowledgeImages(images)}`;
