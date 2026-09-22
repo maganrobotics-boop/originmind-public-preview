@@ -145,9 +145,21 @@ jobs:
               }
           }
           NGINX
+          if command -v ufw >/dev/null 2>&1; then
+            ufw allow 80/tcp || true
+            ufw allow 8080/tcp || true
+          fi
+          if command -v firewall-cmd >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port=80/tcp || true
+            firewall-cmd --permanent --add-port=8080/tcp || true
+            firewall-cmd --reload || true
+          fi
+          iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 80 -j ACCEPT || true
+          iptables -C INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 8080 -j ACCEPT || true
           nginx -t
           systemctl enable nginx >/dev/null 2>&1 || true
           systemctl reload nginx || systemctl restart nginx
+          ss -lntp | grep -E ':(80|8080)\b' || true
           curl -fsS --max-time 10 -o /dev/null http://127.0.0.1:8080/
           REMOTE
 
