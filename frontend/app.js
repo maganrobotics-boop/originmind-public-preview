@@ -4,6 +4,9 @@ const KATEX_ASSET = "__KATEX_ASSET__";
 void KATEX_ASSET;
 
 const STORAGE_KEY = "originmind-public-preview-conversations-v1";
+const PUBLIC_API_BASE = typeof window.PUBLIC_API_BASE === "string" && window.PUBLIC_API_BASE.trim()
+  ? window.PUBLIC_API_BASE.replace(/\/+$/u, "")
+  : "";
 const DEFAULT_SUGGESTIONS = [
   "实验室现有的机器人平台包括哪些？",
   "介绍实验室当前的主要研究方向",
@@ -20,6 +23,10 @@ const MODE_COPY = {
   voice: ["想了解实验室的什么？", "从已审核的实验室公开知识中检索并回答", "说出想了解的实验室问题", "语音模型"],
   vision: ["想了解实验室的什么？", "从已审核的实验室公开知识中检索并回答", "上传图片或描述需要识别的内容", "视觉模型"],
 };
+
+function apiUrl(path) {
+  return `${PUBLIC_API_BASE}${path}`;
+}
 
 const icons = {
   chat: '<svg viewBox="0 0 24 24" fill="none"><path d="M5 5h14v11H9l-4 3V5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
@@ -212,10 +219,14 @@ async function submitMessage(rawText) {
   updateSendState();
   const typing = addMessage("assistant", "", { typing: true });
   try {
-    const response = await fetch("/api/chat", {
+    const response = await fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: text || fileText, section: currentMode }),
+      body: JSON.stringify({
+        topic: "research",
+        analyticsSection: currentMode === "text" ? "research" : "general",
+        messages: [{ role: "user", content: text || fileText }],
+      }),
     });
     const data = await response.json().catch(() => ({}));
     typing.remove();
@@ -255,7 +266,7 @@ function loadHistory(key) {
 
 async function refreshSuggestions() {
   try {
-    const response = await fetch("/api/suggestions");
+    const response = await fetch(apiUrl("/api/suggestions"));
     const data = await response.json();
     const suggestions = (Array.isArray(data.suggestions) ? data.suggestions : []).map((item) => typeof item === "string" ? item : item.question).filter(Boolean).slice(0, 4);
     if (!suggestions.length) return;
@@ -266,7 +277,7 @@ async function refreshSuggestions() {
 
 async function refreshStatus() {
   try {
-    const response = await fetch("/api/status");
+    const response = await fetch(apiUrl("/api/status"));
     const status = await response.json();
     if (status && status.storageReady === false) showToast("资料服务暂不可用");
   } catch { /* visual preview can be static */ }

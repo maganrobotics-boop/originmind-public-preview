@@ -43,6 +43,7 @@
   "vars": {
     "APP_ORIGIN": "https://chat.omindos.ai",
     "ADMIN_EMAIL": "administrator@omindos.ai",
+    "PUBLIC_ALLOWED_ORIGINS": "https://maganrobotics-boop.github.io",
     "RELEASE_ID": "development"
   },
   "observability": {

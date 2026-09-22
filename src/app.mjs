@@ -77,6 +77,43 @@ function json(data, status = 200, headers = {}) {
   });
 }
 
+function configuredPublicOrigins(env) {
+  return String(env.PUBLIC_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function publicCorsHeaders(context) {
+  const origin = context.request.headers.get("origin");
+  if (!origin || !configuredPublicOrigins(context.env).includes(origin)) return null;
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
+  };
+}
+
+function publicJson(context, data, status = 200, headers = {}) {
+  return json(data, status, {
+    ...(publicCorsHeaders(context) || {}),
+    ...headers,
+  });
+}
+
+function publicOptions(context) {
+  const headers = publicCorsHeaders(context);
+  return headers
+    ? new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, ...headers } })
+    : json({ error: "请从本站页面提交请求" }, 403);
+}
+
+function publicWriteAllowed(context) {
+  if (context.request.headers.get("origin") === canonicalOrigin(context.env)) return true;
+  return Boolean(publicCorsHeaders(context));
+}
+
 function chatTimingHeaders(timing) {
   const duration = (value) => Math.max(0, Math.round(value));
   return {
@@ -985,10 +1022,12 @@ async function api(context) {
   const { request } = context;
   const path = new URL(request.url).pathname.replace(/^\/api\//u, "");
   const method = request.method;
+  const publicApiPath = ["status", "suggestions", "chat"].includes(path);
   const chatTiming = path === "chat" && method === "POST"
     ? { startedAt: Date.now(), oa: 0, model: 0 }
     : null;
   try {
+    if (method === "OPTIONS" && publicApiPath) return publicOptions(context);
     if (path === "internal/oa-admin") return handleOaAdminBridge(context, {
       claimRequest: async (nonce) => {
         await consumeCounter(context, `oa-admin-bridge:${nonce}`, 1, Math.floor(Date.now() / 1000) + 120);
@@ -1004,7 +1043,9 @@ async function api(context) {
         await database(context).prepare("DELETE FROM limits WHERE expires < ?").bind(Math.floor(Date.now() / 1000)).run();
       },
     });
-    if (method === "POST" || method === "PATCH") sameOrigin(context);
+    if (method === "POST" || method === "PATCH") {
+      if (!(publicApiPath && publicWriteAllowed(context))) sameOrigin(context);
+    }
     if (path === "shares" && method === "POST") {
       await limit(context, "share", 20, 3600);
       const input = await readJson(request, 32_000);
@@ -1047,7 +1088,7 @@ async function api(context) {
         const oaReady = !oaPending && oa.oaReady;
         const knowledgeReady = !oaPending && oa.knowledgeReady;
         const retrievalReady = !oaPending && oa.retrievalReady;
-        return json({
+        return publicJson(context, {
           storageReady: true,
           modelReady,
           qwenReady,
@@ -1064,7 +1105,7 @@ async function api(context) {
         });
       } catch (error) {
         if (error instanceof PublicError) throw error;
-        return json({
+        return publicJson(context, {
           storageReady: false,
           modelReady: false,
           qwenReady: false,
@@ -1091,7 +1132,7 @@ async function api(context) {
         result = { status: "unavailable", suggestions: [] };
       }
       const recommendationsReady = result.status === "connected";
-      return json({
+      return publicJson(context, {
         suggestions: recommendationsReady ? result.suggestions : [],
         oaPublicStatus: recommendationsReady ? "connected" : "unavailable",
       });
@@ -1155,7 +1196,7 @@ async function api(context) {
             source: analyticsSource,
           }]);
         }
-        return json({
+        return publicJson(context, {
           ...result,
           conversationToken: token,
         }, 200, chatTimingHeaders(chatTiming));
@@ -1502,7 +1543,10 @@ async function api(context) {
     }
     return json({ error: "没有找到此接口" }, 404);
   } catch (error) {
-    const responseHeaders = chatTiming ? chatTimingHeaders(chatTiming) : {};
+    const responseHeaders = {
+      ...(publicApiPath ? publicCorsHeaders(context) || {} : {}),
+      ...(chatTiming ? chatTimingHeaders(chatTiming) : {}),
+    };
     if (error instanceof ValidationError) return json({ error: error.message }, 400, responseHeaders);
     if (error instanceof PublicError) return json({ error: error.message }, error.status, responseHeaders);
     console.error("Request failed", {

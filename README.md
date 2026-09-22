@@ -81,6 +81,12 @@ own configuration with the exact public origin. Production disables both
 `workers.dev` and preview URLs and is attached using the route
 `chat.omindos.ai/*` only after a successful preview smoke test.
 
+For static showcase pages hosted outside the Worker, set
+`PUBLIC_ALLOWED_ORIGINS` to a comma-separated allowlist such as
+`https://maganrobotics-boop.github.io`. Only the public `GET /api/status`,
+`GET /api/suggestions` and `POST /api/chat` endpoints use this cross-origin
+allowlist; admin and configuration APIs remain same-origin.
+
 ## Verification
 
 ```sh

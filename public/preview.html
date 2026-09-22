@@ -726,6 +726,7 @@
 
   <script>
     const APP_CONFIG = Object.freeze({
+      apiBase: window.PUBLIC_API_BASE || 'https://chat.omindos.ai',
       feishuAppId: 'cli_aa3a4c60c2381bd8',
       feishuCallbackPath: '/auth/feishu/callback/'
     });
@@ -823,15 +824,11 @@
       }));
     }
 
-    function generateReply(text) {
-      if (/机器人|平台/.test(text)) return '接入实验室公开知识库后，我会按平台名称、核心能力、应用场景和资料来源整理回答。当前版本先展示交互界面。';
-      if (/研究|方向/.test(text)) return '知识库接入后，我会从已审核的实验室介绍、研究方向和项目资料中检索，并给出结构化回答。';
-      if (/成果|应用/.test(text)) return '知识库接入后，我会汇总公开且已审核的代表性成果、应用场景与相关资料来源。';
-      if (/合作|联系|加入/.test(text)) return '知识库接入后，我会根据实验室公开信息说明合作方向、联系渠道和申请要求。';
-      return '收到。接入实验室公开知识库后，我会只基于已审核内容检索并回答，并标明可核对的资料来源。';
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
     }
 
-    function submitMessage(rawText) {
+    async function submitMessage(rawText) {
       const text = rawText.trim();
       const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
       if (!text && !fileText) return;
@@ -844,10 +841,24 @@
       updateSendState();
       const typing = addTyping();
       clearTimeout(replyTimer);
-      replyTimer = setTimeout(() => {
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            analyticsSection: currentMode === 'text' ? 'research' : 'general',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
         typing.remove();
-        addMessage('assistant', generateReply(text || fileText));
-      }, 780);
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。');
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
     }
 
     function resetChat() {
