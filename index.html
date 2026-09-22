@@ -343,7 +343,7 @@
       top: 12px;
       left: 50%;
       bottom: 185px;
-      width: min(1180px,calc(100% - 40px));
+      width: calc(100% - 40px);
       transform: translateX(-50%);
       padding: 24px 8px 54px;
       overflow-y: auto;
@@ -371,8 +371,8 @@
     .mini-loader::before { top: 2px; background: linear-gradient(100deg,#78ece1,#b9e8ff); }
     .mini-loader::after { bottom: 2px; background: linear-gradient(100deg,#6bb8fa,#9975ee); }
 
-    .message-content { max-width: min(1040px,94%); font-size: 15px; line-height: 1.76; color: #31353c; }
-    .message.assistant .message-content { width: min(1040px,100%); }
+    .message-content { max-width: none; font-size: 15px; line-height: 1.76; color: #31353c; }
+    .message.assistant .message-content { width: calc(100% - 36px); }
     .message.assistant .message-content { padding-top: 1px; }
     .message.user .message-content { padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: #f1f1f2; color: #25282e; }
     .message-content p { margin: 0; white-space: pre-wrap; }
@@ -408,7 +408,7 @@
     body.chat-active .empty-state { opacity: 0; visibility: hidden; transform: translateY(-22px); }
     body.chat-active .suggestions { opacity: 0; pointer-events: none; transform: translate(-50%,16px); }
     body.chat-active .conversation { opacity: 1; visibility: visible; }
-    body.chat-active .composer-wrap { top: auto; bottom: 27px; width: min(1040px,calc(100% - 40px)); }
+    body.chat-active .composer-wrap { top: auto; bottom: 27px; width: calc(100% - 40px); }
     body.chat-active .composer-glow { opacity: .55; }
     body.chat-active .input-panel { min-height: 70px; padding-top: 13px; }
     body.chat-active .prompt-input { min-height: 42px; max-height: 92px; }
@@ -546,7 +546,7 @@
       .empty-state { padding-top: 128px; }
       .composer-wrap { top: 215px; width: calc(100% - 32px); }
       .suggestions { top: 402px; width: calc(100% - 32px); }
-      body.chat-active .composer-wrap, .message-list { width: calc(100% - 32px); }
+      body.chat-active .composer-wrap, .message-list { width: calc(100% - 24px); }
       .toast { left: calc(50% + 34px); }
     }
 
@@ -574,7 +574,7 @@
       .suggestion:nth-child(n+3) { display: none; }
       .model-pill span { display: none; }
       .message-list { top: 0; bottom: 176px; width: calc(100% - 22px); padding-inline: 0; }
-      .message-content { max-width: 90%; }
+      .message-content { max-width: 94%; }
       body.chat-active .composer-wrap { width: calc(100% - 20px); bottom: 22px; }
       body.chat-active .input-panel { min-height: 62px; }
       body.chat-active .composer-footer { height: 49px; }
