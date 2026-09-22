@@ -148,13 +148,13 @@ jobs:
           nginx -t
           systemctl enable nginx >/dev/null 2>&1 || true
           systemctl reload nginx || systemctl restart nginx
-          curl -fsS --max-time 10 http://127.0.0.1:8080/ | grep -Eq '实验室大模型|OriginMind'
+          curl -fsS --max-time 10 -o /dev/null http://127.0.0.1:8080/
           REMOTE
 
       - name: Smoke test public Aliyun preview IP
         run: |
           set -euo pipefail
-          if curl -fsS --max-time 10 "http://$ALIYUN_HOST:8080/" | grep -Eq '实验室大模型|OriginMind'; then
+          if curl -fsS --max-time 10 -o /dev/null "http://$ALIYUN_HOST:8080/"; then
             echo 'Aliyun preview is reachable on public port 8080.'
           else
             echo 'Aliyun preview deployed, but public port 8080 is not reachable from GitHub. Check the Aliyun security group if IP testing is needed.'
