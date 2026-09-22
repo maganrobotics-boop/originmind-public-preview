@@ -385,6 +385,9 @@
     .answer-content table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 8px; font-size: 14px; }
     .answer-content th, .answer-content td { border: 1px solid #e5e7eb; padding: 7px 9px; text-align: left; vertical-align: top; }
     .answer-content th { background: #f7f8fa; color: #17191d; font-weight: 700; }
+    .math-inline { display: inline-flex; align-items: baseline; max-width: 100%; overflow-x: auto; vertical-align: baseline; }
+    .math-display { display: block; max-width: 100%; margin: 10px 0; overflow-x: auto; text-align: center; }
+    .math-display math { margin: 0 auto; }
     .knowledge-gallery { display: grid; gap: 12px; margin-top: 4px; }
     .knowledge-image { margin: 0; max-width: min(520px,100%); border: 1px solid #eceef2; border-radius: 10px; overflow: hidden; background: #fff; }
     .knowledge-image img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; background: #f7f8fa; }
@@ -741,6 +744,9 @@
       feishuAppId: 'cli_aa3a4c60c2381bd8',
       feishuCallbackPath: '/auth/feishu/callback/'
     });
+    const KATEX_ASSET = 'https://cdn.jsdelivr.net/npm/katex@0.18.7/dist/katex.mjs';
+    let answerMathEngine = null;
+    import(KATEX_ASSET).then(module => { answerMathEngine = module.default || module; }).catch(() => { answerMathEngine = null; });
 
     const body = document.body;
     const form = document.querySelector('.composer');
@@ -807,10 +813,1618 @@
       return String(value ?? '').replace(/[&<>"']/gu, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     }
 
+    function answerMathTokenAt(text, index) {
+      let left = '';
+      let right = '';
+      let display = false;
+      if (text.startsWith('\\[', index)) { left = '\\['; right = '\\]'; display = true; }
+      else if (text.startsWith('\\(', index)) { left = '\\('; right = '\\)'; }
+      else if (text.startsWith('$', index)) { left = right = '$'; display = true; }
+      else if (text[index] === '
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        if (/^\s*(?:\$\$|\\\[)/u.test(line)) {
+          const isDollar = /^\s*\$\$/u.test(line);
+          const close = isDollar ? '$' : '\\]';
+          const start = isDollar ? line.indexOf('$') + 2 : line.indexOf('\\[') + 2;
+          let tex = line.slice(start);
+          let found = tex.includes(close);
+          while (!found && index + 1 < lines.length) {
+            index += 1;
+            tex += '\n' + lines[index];
+            found = lines[index].includes(close);
+          }
+          if (found) {
+            const end = tex.lastIndexOf(close);
+            const raw = `${isDollar ? '$' : '\\['}${tex.slice(0, end)}${close}`;
+            flushParagraph(); flushList();
+            output.push(renderAnswerMath(tex.slice(0, end), true, raw));
+            continue;
+          }
+        }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
+      const item = document.createElement('article');
+      item.className = `message ${role}`;
+      if (role === 'assistant') {
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
+      } else {
+        item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
+      }
+      messageList.appendChild(item);
+      bindMessageActions(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function addTyping() {
+      const item = document.createElement('article');
+      item.className = 'message assistant typing-message';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      messageList.appendChild(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function bindMessageActions(scope) {
+      scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
+        const text = button.closest('.message-content').innerText.trim();
+        try { await navigator.clipboard.writeText(text); showToast('已复制'); }
+        catch { showToast('复制失败，请手动选择文本'); }
+      }));
+    }
+
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
+    }
+
+    async function submitMessage(rawText) {
+      const text = rawText.trim();
+      const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
+      if (!text && !fileText) return;
+      body.classList.add('chat-active');
+      addMessage('user', [text,fileText].filter(Boolean).join('\n'));
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      updateSendState();
+      const typing = addTyping();
+      clearTimeout(replyTimer);
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
+    }
+
+    function resetChat() {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      body.classList.remove('chat-active');
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('current'));
+      updateSendState();
+      setTimeout(() => promptInput.focus(),220);
+    }
+
+    function loadHistory(key) {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      body.classList.add('chat-active');
+      historyData[key].forEach(([role,text]) => addMessage(role,text));
+      document.querySelectorAll('.history-item').forEach(item => item.classList.toggle('current',item.dataset.history === key));
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); submitMessage(promptInput.value); });
+    promptInput.addEventListener('input', () => { autoResize(); updateSendState(); });
+    promptInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+
+    document.querySelector('.attach-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      attachmentName.textContent = file.name;
+      attachmentChip.classList.add('show');
+      updateSendState();
+    });
+
+    voiceButton.addEventListener('click', () => {
+      if (voiceButton.classList.contains('recording')) {
+        clearTimeout(recordingTimer);
+        voiceButton.classList.remove('recording');
+        promptInput.placeholder = modeCopy[currentMode][2];
+        showToast('语音输入已停止');
+        return;
+      }
+      voiceButton.classList.add('recording');
+      promptInput.placeholder = '正在聆听…';
+      recordingTimer = setTimeout(() => {
+        voiceButton.classList.remove('recording');
+        promptInput.value = '帮我整理一下今天的工作重点';
+        promptInput.placeholder = modeCopy[currentMode][2];
+        autoResize();
+        updateSendState();
+        showToast('已转换为文字');
+      }, 1600);
+    });
+
+    document.querySelectorAll('.suggestion').forEach(item => item.addEventListener('click', () => submitMessage(item.dataset.prompt)));
+
+    document.querySelectorAll('.model-nav-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.model-nav-item').forEach(button => button.classList.remove('active'));
+      item.classList.add('active');
+      currentMode = item.dataset.mode;
+      const copy = modeCopy[currentMode];
+      heroTitle.textContent = copy[0];
+      heroSubtitle.textContent = copy[1];
+      promptInput.placeholder = copy[2];
+      modelPillLabel.textContent = copy[3];
+      if (currentMode === 'voice' && !body.classList.contains('chat-active')) voiceButton.focus();
+    }));
+
+    document.querySelectorAll('.new-chat-bottom').forEach(button => button.addEventListener('click', resetChat));
+    document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', () => loadHistory(item.dataset.history)));
+    document.querySelector('.collapse-handle').addEventListener('click', () => body.classList.toggle('sidebar-collapsed'));
+    document.querySelector('.model-pill').addEventListener('click', () => showToast(`当前使用${modeCopy[currentMode][3]}`));
+
+    const authBackdrop = document.querySelector('.auth-backdrop');
+    const settingsTrigger = document.querySelector('.settings-trigger');
+    const authClose = document.querySelector('.auth-close');
+    const feishuLogin = document.querySelector('.feishu-login');
+
+    function openAuth() {
+      authBackdrop.classList.add('open');
+      authBackdrop.setAttribute('aria-hidden','false');
+      setTimeout(() => feishuLogin.focus(),80);
+    }
+
+    function closeAuth() {
+      authBackdrop.classList.remove('open');
+      authBackdrop.setAttribute('aria-hidden','true');
+      settingsTrigger.focus();
+    }
+
+    settingsTrigger.addEventListener('click', openAuth);
+    authClose.addEventListener('click', closeAuth);
+    authBackdrop.addEventListener('click', event => { if (event.target === authBackdrop) closeAuth(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && authBackdrop.classList.contains('open')) closeAuth(); });
+    function createOAuthState() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
+    }
+
+    function startFeishuLogin() {
+      const state = createOAuthState();
+      const callbackUrl = new URL(APP_CONFIG.feishuCallbackPath, window.location.origin);
+      sessionStorage.setItem('feishu_oauth_state', state);
+      sessionStorage.setItem('feishu_oauth_return_to', window.location.href);
+      const authorizeUrl = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
+      authorizeUrl.searchParams.set('app_id', APP_CONFIG.feishuAppId);
+      authorizeUrl.searchParams.set('redirect_uri', callbackUrl.href);
+      authorizeUrl.searchParams.set('state', state);
+      window.location.assign(authorizeUrl.href);
+    }
+
+    feishuLogin.addEventListener('click', startFeishuLogin);
+    updateSendState();
+  </script>
+</body>
+</html>
+ && text[index - 1] !== '
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
+      const item = document.createElement('article');
+      item.className = `message ${role}`;
+      if (role === 'assistant') {
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
+      } else {
+        item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
+      }
+      messageList.appendChild(item);
+      bindMessageActions(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function addTyping() {
+      const item = document.createElement('article');
+      item.className = 'message assistant typing-message';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      messageList.appendChild(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function bindMessageActions(scope) {
+      scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
+        const text = button.closest('.message-content').innerText.trim();
+        try { await navigator.clipboard.writeText(text); showToast('已复制'); }
+        catch { showToast('复制失败，请手动选择文本'); }
+      }));
+    }
+
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
+    }
+
+    async function submitMessage(rawText) {
+      const text = rawText.trim();
+      const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
+      if (!text && !fileText) return;
+      body.classList.add('chat-active');
+      addMessage('user', [text,fileText].filter(Boolean).join('\n'));
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      updateSendState();
+      const typing = addTyping();
+      clearTimeout(replyTimer);
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
+    }
+
+    function resetChat() {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      body.classList.remove('chat-active');
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('current'));
+      updateSendState();
+      setTimeout(() => promptInput.focus(),220);
+    }
+
+    function loadHistory(key) {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      body.classList.add('chat-active');
+      historyData[key].forEach(([role,text]) => addMessage(role,text));
+      document.querySelectorAll('.history-item').forEach(item => item.classList.toggle('current',item.dataset.history === key));
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); submitMessage(promptInput.value); });
+    promptInput.addEventListener('input', () => { autoResize(); updateSendState(); });
+    promptInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+
+    document.querySelector('.attach-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      attachmentName.textContent = file.name;
+      attachmentChip.classList.add('show');
+      updateSendState();
+    });
+
+    voiceButton.addEventListener('click', () => {
+      if (voiceButton.classList.contains('recording')) {
+        clearTimeout(recordingTimer);
+        voiceButton.classList.remove('recording');
+        promptInput.placeholder = modeCopy[currentMode][2];
+        showToast('语音输入已停止');
+        return;
+      }
+      voiceButton.classList.add('recording');
+      promptInput.placeholder = '正在聆听…';
+      recordingTimer = setTimeout(() => {
+        voiceButton.classList.remove('recording');
+        promptInput.value = '帮我整理一下今天的工作重点';
+        promptInput.placeholder = modeCopy[currentMode][2];
+        autoResize();
+        updateSendState();
+        showToast('已转换为文字');
+      }, 1600);
+    });
+
+    document.querySelectorAll('.suggestion').forEach(item => item.addEventListener('click', () => submitMessage(item.dataset.prompt)));
+
+    document.querySelectorAll('.model-nav-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.model-nav-item').forEach(button => button.classList.remove('active'));
+      item.classList.add('active');
+      currentMode = item.dataset.mode;
+      const copy = modeCopy[currentMode];
+      heroTitle.textContent = copy[0];
+      heroSubtitle.textContent = copy[1];
+      promptInput.placeholder = copy[2];
+      modelPillLabel.textContent = copy[3];
+      if (currentMode === 'voice' && !body.classList.contains('chat-active')) voiceButton.focus();
+    }));
+
+    document.querySelectorAll('.new-chat-bottom').forEach(button => button.addEventListener('click', resetChat));
+    document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', () => loadHistory(item.dataset.history)));
+    document.querySelector('.collapse-handle').addEventListener('click', () => body.classList.toggle('sidebar-collapsed'));
+    document.querySelector('.model-pill').addEventListener('click', () => showToast(`当前使用${modeCopy[currentMode][3]}`));
+
+    const authBackdrop = document.querySelector('.auth-backdrop');
+    const settingsTrigger = document.querySelector('.settings-trigger');
+    const authClose = document.querySelector('.auth-close');
+    const feishuLogin = document.querySelector('.feishu-login');
+
+    function openAuth() {
+      authBackdrop.classList.add('open');
+      authBackdrop.setAttribute('aria-hidden','false');
+      setTimeout(() => feishuLogin.focus(),80);
+    }
+
+    function closeAuth() {
+      authBackdrop.classList.remove('open');
+      authBackdrop.setAttribute('aria-hidden','true');
+      settingsTrigger.focus();
+    }
+
+    settingsTrigger.addEventListener('click', openAuth);
+    authClose.addEventListener('click', closeAuth);
+    authBackdrop.addEventListener('click', event => { if (event.target === authBackdrop) closeAuth(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && authBackdrop.classList.contains('open')) closeAuth(); });
+    function createOAuthState() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
+    }
+
+    function startFeishuLogin() {
+      const state = createOAuthState();
+      const callbackUrl = new URL(APP_CONFIG.feishuCallbackPath, window.location.origin);
+      sessionStorage.setItem('feishu_oauth_state', state);
+      sessionStorage.setItem('feishu_oauth_return_to', window.location.href);
+      const authorizeUrl = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
+      authorizeUrl.searchParams.set('app_id', APP_CONFIG.feishuAppId);
+      authorizeUrl.searchParams.set('redirect_uri', callbackUrl.href);
+      authorizeUrl.searchParams.set('state', state);
+      window.location.assign(authorizeUrl.href);
+    }
+
+    feishuLogin.addEventListener('click', startFeishuLogin);
+    updateSendState();
+  </script>
+</body>
+</html>
+ && text[index + 1] !== '
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
+      const item = document.createElement('article');
+      item.className = `message ${role}`;
+      if (role === 'assistant') {
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
+      } else {
+        item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
+      }
+      messageList.appendChild(item);
+      bindMessageActions(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function addTyping() {
+      const item = document.createElement('article');
+      item.className = 'message assistant typing-message';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      messageList.appendChild(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function bindMessageActions(scope) {
+      scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
+        const text = button.closest('.message-content').innerText.trim();
+        try { await navigator.clipboard.writeText(text); showToast('已复制'); }
+        catch { showToast('复制失败，请手动选择文本'); }
+      }));
+    }
+
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
+    }
+
+    async function submitMessage(rawText) {
+      const text = rawText.trim();
+      const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
+      if (!text && !fileText) return;
+      body.classList.add('chat-active');
+      addMessage('user', [text,fileText].filter(Boolean).join('\n'));
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      updateSendState();
+      const typing = addTyping();
+      clearTimeout(replyTimer);
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
+    }
+
+    function resetChat() {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      body.classList.remove('chat-active');
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('current'));
+      updateSendState();
+      setTimeout(() => promptInput.focus(),220);
+    }
+
+    function loadHistory(key) {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      body.classList.add('chat-active');
+      historyData[key].forEach(([role,text]) => addMessage(role,text));
+      document.querySelectorAll('.history-item').forEach(item => item.classList.toggle('current',item.dataset.history === key));
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); submitMessage(promptInput.value); });
+    promptInput.addEventListener('input', () => { autoResize(); updateSendState(); });
+    promptInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+
+    document.querySelector('.attach-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      attachmentName.textContent = file.name;
+      attachmentChip.classList.add('show');
+      updateSendState();
+    });
+
+    voiceButton.addEventListener('click', () => {
+      if (voiceButton.classList.contains('recording')) {
+        clearTimeout(recordingTimer);
+        voiceButton.classList.remove('recording');
+        promptInput.placeholder = modeCopy[currentMode][2];
+        showToast('语音输入已停止');
+        return;
+      }
+      voiceButton.classList.add('recording');
+      promptInput.placeholder = '正在聆听…';
+      recordingTimer = setTimeout(() => {
+        voiceButton.classList.remove('recording');
+        promptInput.value = '帮我整理一下今天的工作重点';
+        promptInput.placeholder = modeCopy[currentMode][2];
+        autoResize();
+        updateSendState();
+        showToast('已转换为文字');
+      }, 1600);
+    });
+
+    document.querySelectorAll('.suggestion').forEach(item => item.addEventListener('click', () => submitMessage(item.dataset.prompt)));
+
+    document.querySelectorAll('.model-nav-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.model-nav-item').forEach(button => button.classList.remove('active'));
+      item.classList.add('active');
+      currentMode = item.dataset.mode;
+      const copy = modeCopy[currentMode];
+      heroTitle.textContent = copy[0];
+      heroSubtitle.textContent = copy[1];
+      promptInput.placeholder = copy[2];
+      modelPillLabel.textContent = copy[3];
+      if (currentMode === 'voice' && !body.classList.contains('chat-active')) voiceButton.focus();
+    }));
+
+    document.querySelectorAll('.new-chat-bottom').forEach(button => button.addEventListener('click', resetChat));
+    document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', () => loadHistory(item.dataset.history)));
+    document.querySelector('.collapse-handle').addEventListener('click', () => body.classList.toggle('sidebar-collapsed'));
+    document.querySelector('.model-pill').addEventListener('click', () => showToast(`当前使用${modeCopy[currentMode][3]}`));
+
+    const authBackdrop = document.querySelector('.auth-backdrop');
+    const settingsTrigger = document.querySelector('.settings-trigger');
+    const authClose = document.querySelector('.auth-close');
+    const feishuLogin = document.querySelector('.feishu-login');
+
+    function openAuth() {
+      authBackdrop.classList.add('open');
+      authBackdrop.setAttribute('aria-hidden','false');
+      setTimeout(() => feishuLogin.focus(),80);
+    }
+
+    function closeAuth() {
+      authBackdrop.classList.remove('open');
+      authBackdrop.setAttribute('aria-hidden','true');
+      settingsTrigger.focus();
+    }
+
+    settingsTrigger.addEventListener('click', openAuth);
+    authClose.addEventListener('click', closeAuth);
+    authBackdrop.addEventListener('click', event => { if (event.target === authBackdrop) closeAuth(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && authBackdrop.classList.contains('open')) closeAuth(); });
+    function createOAuthState() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
+    }
+
+    function startFeishuLogin() {
+      const state = createOAuthState();
+      const callbackUrl = new URL(APP_CONFIG.feishuCallbackPath, window.location.origin);
+      sessionStorage.setItem('feishu_oauth_state', state);
+      sessionStorage.setItem('feishu_oauth_return_to', window.location.href);
+      const authorizeUrl = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
+      authorizeUrl.searchParams.set('app_id', APP_CONFIG.feishuAppId);
+      authorizeUrl.searchParams.set('redirect_uri', callbackUrl.href);
+      authorizeUrl.searchParams.set('state', state);
+      window.location.assign(authorizeUrl.href);
+    }
+
+    feishuLogin.addEventListener('click', startFeishuLogin);
+    updateSendState();
+  </script>
+</body>
+</html>
+) { left = right = '
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
+      const item = document.createElement('article');
+      item.className = `message ${role}`;
+      if (role === 'assistant') {
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
+      } else {
+        item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
+      }
+      messageList.appendChild(item);
+      bindMessageActions(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function addTyping() {
+      const item = document.createElement('article');
+      item.className = 'message assistant typing-message';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      messageList.appendChild(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function bindMessageActions(scope) {
+      scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
+        const text = button.closest('.message-content').innerText.trim();
+        try { await navigator.clipboard.writeText(text); showToast('已复制'); }
+        catch { showToast('复制失败，请手动选择文本'); }
+      }));
+    }
+
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
+    }
+
+    async function submitMessage(rawText) {
+      const text = rawText.trim();
+      const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
+      if (!text && !fileText) return;
+      body.classList.add('chat-active');
+      addMessage('user', [text,fileText].filter(Boolean).join('\n'));
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      updateSendState();
+      const typing = addTyping();
+      clearTimeout(replyTimer);
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
+    }
+
+    function resetChat() {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      body.classList.remove('chat-active');
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('current'));
+      updateSendState();
+      setTimeout(() => promptInput.focus(),220);
+    }
+
+    function loadHistory(key) {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      body.classList.add('chat-active');
+      historyData[key].forEach(([role,text]) => addMessage(role,text));
+      document.querySelectorAll('.history-item').forEach(item => item.classList.toggle('current',item.dataset.history === key));
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); submitMessage(promptInput.value); });
+    promptInput.addEventListener('input', () => { autoResize(); updateSendState(); });
+    promptInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+
+    document.querySelector('.attach-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      attachmentName.textContent = file.name;
+      attachmentChip.classList.add('show');
+      updateSendState();
+    });
+
+    voiceButton.addEventListener('click', () => {
+      if (voiceButton.classList.contains('recording')) {
+        clearTimeout(recordingTimer);
+        voiceButton.classList.remove('recording');
+        promptInput.placeholder = modeCopy[currentMode][2];
+        showToast('语音输入已停止');
+        return;
+      }
+      voiceButton.classList.add('recording');
+      promptInput.placeholder = '正在聆听…';
+      recordingTimer = setTimeout(() => {
+        voiceButton.classList.remove('recording');
+        promptInput.value = '帮我整理一下今天的工作重点';
+        promptInput.placeholder = modeCopy[currentMode][2];
+        autoResize();
+        updateSendState();
+        showToast('已转换为文字');
+      }, 1600);
+    });
+
+    document.querySelectorAll('.suggestion').forEach(item => item.addEventListener('click', () => submitMessage(item.dataset.prompt)));
+
+    document.querySelectorAll('.model-nav-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.model-nav-item').forEach(button => button.classList.remove('active'));
+      item.classList.add('active');
+      currentMode = item.dataset.mode;
+      const copy = modeCopy[currentMode];
+      heroTitle.textContent = copy[0];
+      heroSubtitle.textContent = copy[1];
+      promptInput.placeholder = copy[2];
+      modelPillLabel.textContent = copy[3];
+      if (currentMode === 'voice' && !body.classList.contains('chat-active')) voiceButton.focus();
+    }));
+
+    document.querySelectorAll('.new-chat-bottom').forEach(button => button.addEventListener('click', resetChat));
+    document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', () => loadHistory(item.dataset.history)));
+    document.querySelector('.collapse-handle').addEventListener('click', () => body.classList.toggle('sidebar-collapsed'));
+    document.querySelector('.model-pill').addEventListener('click', () => showToast(`当前使用${modeCopy[currentMode][3]}`));
+
+    const authBackdrop = document.querySelector('.auth-backdrop');
+    const settingsTrigger = document.querySelector('.settings-trigger');
+    const authClose = document.querySelector('.auth-close');
+    const feishuLogin = document.querySelector('.feishu-login');
+
+    function openAuth() {
+      authBackdrop.classList.add('open');
+      authBackdrop.setAttribute('aria-hidden','false');
+      setTimeout(() => feishuLogin.focus(),80);
+    }
+
+    function closeAuth() {
+      authBackdrop.classList.remove('open');
+      authBackdrop.setAttribute('aria-hidden','true');
+      settingsTrigger.focus();
+    }
+
+    settingsTrigger.addEventListener('click', openAuth);
+    authClose.addEventListener('click', closeAuth);
+    authBackdrop.addEventListener('click', event => { if (event.target === authBackdrop) closeAuth(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && authBackdrop.classList.contains('open')) closeAuth(); });
+    function createOAuthState() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
+    }
+
+    function startFeishuLogin() {
+      const state = createOAuthState();
+      const callbackUrl = new URL(APP_CONFIG.feishuCallbackPath, window.location.origin);
+      sessionStorage.setItem('feishu_oauth_state', state);
+      sessionStorage.setItem('feishu_oauth_return_to', window.location.href);
+      const authorizeUrl = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
+      authorizeUrl.searchParams.set('app_id', APP_CONFIG.feishuAppId);
+      authorizeUrl.searchParams.set('redirect_uri', callbackUrl.href);
+      authorizeUrl.searchParams.set('state', state);
+      window.location.assign(authorizeUrl.href);
+    }
+
+    feishuLogin.addEventListener('click', startFeishuLogin);
+    updateSendState();
+  </script>
+</body>
+</html>
+; }
+      else return null;
+      const start = index + left.length;
+      const end = text.indexOf(right, start);
+      if (end === -1) return null;
+      const content = text.slice(start, end);
+      const trimmed = content.trim();
+      if (left === '
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
+      const item = document.createElement('article');
+      item.className = `message ${role}`;
+      if (role === 'assistant') {
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
+      } else {
+        item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
+      }
+      messageList.appendChild(item);
+      bindMessageActions(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function addTyping() {
+      const item = document.createElement('article');
+      item.className = 'message assistant typing-message';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      messageList.appendChild(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function bindMessageActions(scope) {
+      scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
+        const text = button.closest('.message-content').innerText.trim();
+        try { await navigator.clipboard.writeText(text); showToast('已复制'); }
+        catch { showToast('复制失败，请手动选择文本'); }
+      }));
+    }
+
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
+    }
+
+    async function submitMessage(rawText) {
+      const text = rawText.trim();
+      const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
+      if (!text && !fileText) return;
+      body.classList.add('chat-active');
+      addMessage('user', [text,fileText].filter(Boolean).join('\n'));
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      updateSendState();
+      const typing = addTyping();
+      clearTimeout(replyTimer);
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
+    }
+
+    function resetChat() {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      body.classList.remove('chat-active');
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('current'));
+      updateSendState();
+      setTimeout(() => promptInput.focus(),220);
+    }
+
+    function loadHistory(key) {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      body.classList.add('chat-active');
+      historyData[key].forEach(([role,text]) => addMessage(role,text));
+      document.querySelectorAll('.history-item').forEach(item => item.classList.toggle('current',item.dataset.history === key));
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); submitMessage(promptInput.value); });
+    promptInput.addEventListener('input', () => { autoResize(); updateSendState(); });
+    promptInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+
+    document.querySelector('.attach-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      attachmentName.textContent = file.name;
+      attachmentChip.classList.add('show');
+      updateSendState();
+    });
+
+    voiceButton.addEventListener('click', () => {
+      if (voiceButton.classList.contains('recording')) {
+        clearTimeout(recordingTimer);
+        voiceButton.classList.remove('recording');
+        promptInput.placeholder = modeCopy[currentMode][2];
+        showToast('语音输入已停止');
+        return;
+      }
+      voiceButton.classList.add('recording');
+      promptInput.placeholder = '正在聆听…';
+      recordingTimer = setTimeout(() => {
+        voiceButton.classList.remove('recording');
+        promptInput.value = '帮我整理一下今天的工作重点';
+        promptInput.placeholder = modeCopy[currentMode][2];
+        autoResize();
+        updateSendState();
+        showToast('已转换为文字');
+      }, 1600);
+    });
+
+    document.querySelectorAll('.suggestion').forEach(item => item.addEventListener('click', () => submitMessage(item.dataset.prompt)));
+
+    document.querySelectorAll('.model-nav-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.model-nav-item').forEach(button => button.classList.remove('active'));
+      item.classList.add('active');
+      currentMode = item.dataset.mode;
+      const copy = modeCopy[currentMode];
+      heroTitle.textContent = copy[0];
+      heroSubtitle.textContent = copy[1];
+      promptInput.placeholder = copy[2];
+      modelPillLabel.textContent = copy[3];
+      if (currentMode === 'voice' && !body.classList.contains('chat-active')) voiceButton.focus();
+    }));
+
+    document.querySelectorAll('.new-chat-bottom').forEach(button => button.addEventListener('click', resetChat));
+    document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', () => loadHistory(item.dataset.history)));
+    document.querySelector('.collapse-handle').addEventListener('click', () => body.classList.toggle('sidebar-collapsed'));
+    document.querySelector('.model-pill').addEventListener('click', () => showToast(`当前使用${modeCopy[currentMode][3]}`));
+
+    const authBackdrop = document.querySelector('.auth-backdrop');
+    const settingsTrigger = document.querySelector('.settings-trigger');
+    const authClose = document.querySelector('.auth-close');
+    const feishuLogin = document.querySelector('.feishu-login');
+
+    function openAuth() {
+      authBackdrop.classList.add('open');
+      authBackdrop.setAttribute('aria-hidden','false');
+      setTimeout(() => feishuLogin.focus(),80);
+    }
+
+    function closeAuth() {
+      authBackdrop.classList.remove('open');
+      authBackdrop.setAttribute('aria-hidden','true');
+      settingsTrigger.focus();
+    }
+
+    settingsTrigger.addEventListener('click', openAuth);
+    authClose.addEventListener('click', closeAuth);
+    authBackdrop.addEventListener('click', event => { if (event.target === authBackdrop) closeAuth(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && authBackdrop.classList.contains('open')) closeAuth(); });
+    function createOAuthState() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
+    }
+
+    function startFeishuLogin() {
+      const state = createOAuthState();
+      const callbackUrl = new URL(APP_CONFIG.feishuCallbackPath, window.location.origin);
+      sessionStorage.setItem('feishu_oauth_state', state);
+      sessionStorage.setItem('feishu_oauth_return_to', window.location.href);
+      const authorizeUrl = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
+      authorizeUrl.searchParams.set('app_id', APP_CONFIG.feishuAppId);
+      authorizeUrl.searchParams.set('redirect_uri', callbackUrl.href);
+      authorizeUrl.searchParams.set('state', state);
+      window.location.assign(authorizeUrl.href);
+    }
+
+    feishuLogin.addEventListener('click', startFeishuLogin);
+    updateSendState();
+  </script>
+</body>
+</html>
+) {
+        if (!trimmed || /\r|\n/u.test(content) || /\d/u.test(text[end + 1] || '')) return null;
+        const padded = content !== trimmed;
+        const looksMathematical = /\\[a-zA-Z]|[_^=+*/<>\-≤≥≠−]/u.test(trimmed) || /^[\p{L}\p{N}.]+$/u.test(trimmed);
+        if (padded && !looksMathematical) return null;
+      }
+      return { raw: text.slice(index, end + right.length), tex: content, display, end: end + right.length };
+    }
+
+    function renderAnswerMath(tex, display, raw) {
+      const fallback = `<span class="${display ? 'math-display' : 'math-inline'}" data-math-status="fallback">${escapeHtml(raw)}</span>`;
+      if (!answerMathEngine?.renderToString || String(tex).length > 8000) return fallback;
+      try {
+        const html = answerMathEngine.renderToString(tex.trim(), {
+          displayMode: display,
+          output: 'mathml',
+          trust: false,
+          throwOnError: true,
+          strict: 'ignore',
+          maxExpand: 1000,
+          maxSize: 10
+        });
+        return `<span class="${display ? 'math-display' : 'math-inline'}" data-math-status="rendered">${html}</span>`;
+      } catch {
+        return fallback;
+      }
+    }
+
     function inlineMarkdown(text) {
-      return escapeHtml(text)
+      const tokens = [];
+      let protectedText = '';
+      for (let index = 0; index < String(text).length;) {
+        if (text[index] === '`') {
+          const end = text.indexOf('`', index + 1);
+          if (end !== -1) {
+            const token = `\uE000C${tokens.length}\uE001`;
+            tokens.push(`<code>${escapeHtml(text.slice(index + 1, end))}</code>`);
+            protectedText += token;
+            index = end + 1;
+            continue;
+          }
+        }
+        const math = (text[index] === '
+
+    function renderMarkdown(markdown) {
+      const lines = String(markdown || '').replace(/\r\n?/gu, '\n').split('\n');
+      const output = [];
+      let paragraph = [];
+      let list = [];
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        output.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
+        paragraph = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        output.push(`<ol>${list.map(item => `<li>${inlineMarkdown(item)}</li>`).join('')}</ol>`);
+        list = [];
+      };
+      const tableRows = start => {
+        const rows = [];
+        let index = start;
+        while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+          rows.push(lines[index].trim());
+          index += 1;
+        }
+        return {rows, next:index};
+      };
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) { flushParagraph(); flushList(); continue; }
+        const heading = line.match(/^(#{1,3})\s+(.+)$/u);
+        if (heading) { flushParagraph(); flushList(); output.push(`<h3>${inlineMarkdown(heading[2])}</h3>`); continue; }
+        const bullet = line.match(/^\s*(?:[-*]|\d+\.)\s+(.+)$/u);
+        if (bullet) { flushParagraph(); list.push(bullet[1]); continue; }
+        if (/^\s*\|.*\|\s*$/u.test(line) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1] || '')) {
+          flushParagraph(); flushList();
+          const table = tableRows(index);
+          const rows = table.rows.filter((_, rowIndex) => rowIndex !== 1).map(row => row.replace(/^\||\|$/gu, '').split('|').map(cell => inlineMarkdown(cell.trim())));
+          const [head = [], ...bodyRows] = rows;
+          output.push(`<table><thead><tr>${head.map(cell => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+          index = table.next - 1;
+          continue;
+        }
+        paragraph.push(line.trim());
+      }
+      flushParagraph(); flushList();
+      return output.join('') || '<p>暂无内容。</p>';
+    }
+
+    function knowledgeImageUrl(value) {
+      const url = String(value || '');
+      if (!/^\/api\/knowledge\/assets\/[A-Za-z0-9_-]+$/u.test(url)) return '';
+      return apiUrl(url);
+    }
+
+    function renderKnowledgeImages(images) {
+      const safeImages = (Array.isArray(images) ? images : [])
+        .map(image => ({
+          url: knowledgeImageUrl(image?.url),
+          alt: String(image?.alt || '资料图片').slice(0, 120)
+        }))
+        .filter(image => image.url)
+        .slice(0, 4);
+      if (!safeImages.length) return '';
+      return `<div class="knowledge-gallery">${safeImages.map(image => `<figure class="knowledge-image"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy" decoding="async"><figcaption>${escapeHtml(image.alt)}</figcaption></figure>`).join('')}</div>`;
+    }
+
+    function addMessage(role, text, options = {}) {
+      const item = document.createElement('article');
+      item.className = `message ${role}`;
+      if (role === 'assistant') {
+        item.innerHTML = `<div class="message-content"><div class="answer-content"></div>${messageActions()}</div>`;
+        item.querySelector('.answer-content').innerHTML = `${renderMarkdown(text)}${renderKnowledgeImages(options.images)}`;
+      } else {
+        item.innerHTML = '<div class="message-content"><p></p></div>';
+        item.querySelector('p').textContent = text;
+      }
+      messageList.appendChild(item);
+      bindMessageActions(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function addTyping() {
+      const item = document.createElement('article');
+      item.className = 'message assistant typing-message';
+      item.innerHTML = '<div class="message-content"><div class="typing"><i></i><i></i><i></i></div></div>';
+      messageList.appendChild(item);
+      messageList.scrollTo({top:messageList.scrollHeight,behavior:'smooth'});
+      return item;
+    }
+
+    function bindMessageActions(scope) {
+      scope.querySelectorAll('.copy-action').forEach(button => button.addEventListener('click', async () => {
+        const text = button.closest('.message-content').innerText.trim();
+        try { await navigator.clipboard.writeText(text); showToast('已复制'); }
+        catch { showToast('复制失败，请手动选择文本'); }
+      }));
+    }
+
+    function apiUrl(path) {
+      return `${APP_CONFIG.apiBase.replace(/\/+$/u,'')}${path}`;
+    }
+
+    async function submitMessage(rawText) {
+      const text = rawText.trim();
+      const fileText = attachmentChip.classList.contains('show') ? `附件：${attachmentName.textContent}` : '';
+      if (!text && !fileText) return;
+      body.classList.add('chat-active');
+      addMessage('user', [text,fileText].filter(Boolean).join('\n'));
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      updateSendState();
+      const typing = addTyping();
+      clearTimeout(replyTimer);
+      try {
+        const response = await fetch(apiUrl('/api/chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: 'research',
+            messages: [{ role: 'user', content: text || fileText }]
+          })
+        });
+        const data = await response.json().catch(() => ({}));
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || '服务暂不可用，请稍后重试。');
+        addMessage('assistant', data.answer || '暂时没有生成回答。', { images: data.images });
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', error?.message || '服务暂不可用，请稍后重试。');
+      }
+    }
+
+    function resetChat() {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      promptInput.value = '';
+      promptInput.style.height = 'auto';
+      fileInput.value = '';
+      attachmentChip.classList.remove('show');
+      body.classList.remove('chat-active');
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('current'));
+      updateSendState();
+      setTimeout(() => promptInput.focus(),220);
+    }
+
+    function loadHistory(key) {
+      clearTimeout(replyTimer);
+      messageList.innerHTML = '';
+      body.classList.add('chat-active');
+      historyData[key].forEach(([role,text]) => addMessage(role,text));
+      document.querySelectorAll('.history-item').forEach(item => item.classList.toggle('current',item.dataset.history === key));
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); submitMessage(promptInput.value); });
+    promptInput.addEventListener('input', () => { autoResize(); updateSendState(); });
+    promptInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); }
+    });
+
+    document.querySelector('.attach-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      attachmentName.textContent = file.name;
+      attachmentChip.classList.add('show');
+      updateSendState();
+    });
+
+    voiceButton.addEventListener('click', () => {
+      if (voiceButton.classList.contains('recording')) {
+        clearTimeout(recordingTimer);
+        voiceButton.classList.remove('recording');
+        promptInput.placeholder = modeCopy[currentMode][2];
+        showToast('语音输入已停止');
+        return;
+      }
+      voiceButton.classList.add('recording');
+      promptInput.placeholder = '正在聆听…';
+      recordingTimer = setTimeout(() => {
+        voiceButton.classList.remove('recording');
+        promptInput.value = '帮我整理一下今天的工作重点';
+        promptInput.placeholder = modeCopy[currentMode][2];
+        autoResize();
+        updateSendState();
+        showToast('已转换为文字');
+      }, 1600);
+    });
+
+    document.querySelectorAll('.suggestion').forEach(item => item.addEventListener('click', () => submitMessage(item.dataset.prompt)));
+
+    document.querySelectorAll('.model-nav-item').forEach(item => item.addEventListener('click', () => {
+      document.querySelectorAll('.model-nav-item').forEach(button => button.classList.remove('active'));
+      item.classList.add('active');
+      currentMode = item.dataset.mode;
+      const copy = modeCopy[currentMode];
+      heroTitle.textContent = copy[0];
+      heroSubtitle.textContent = copy[1];
+      promptInput.placeholder = copy[2];
+      modelPillLabel.textContent = copy[3];
+      if (currentMode === 'voice' && !body.classList.contains('chat-active')) voiceButton.focus();
+    }));
+
+    document.querySelectorAll('.new-chat-bottom').forEach(button => button.addEventListener('click', resetChat));
+    document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', () => loadHistory(item.dataset.history)));
+    document.querySelector('.collapse-handle').addEventListener('click', () => body.classList.toggle('sidebar-collapsed'));
+    document.querySelector('.model-pill').addEventListener('click', () => showToast(`当前使用${modeCopy[currentMode][3]}`));
+
+    const authBackdrop = document.querySelector('.auth-backdrop');
+    const settingsTrigger = document.querySelector('.settings-trigger');
+    const authClose = document.querySelector('.auth-close');
+    const feishuLogin = document.querySelector('.feishu-login');
+
+    function openAuth() {
+      authBackdrop.classList.add('open');
+      authBackdrop.setAttribute('aria-hidden','false');
+      setTimeout(() => feishuLogin.focus(),80);
+    }
+
+    function closeAuth() {
+      authBackdrop.classList.remove('open');
+      authBackdrop.setAttribute('aria-hidden','true');
+      settingsTrigger.focus();
+    }
+
+    settingsTrigger.addEventListener('click', openAuth);
+    authClose.addEventListener('click', closeAuth);
+    authBackdrop.addEventListener('click', event => { if (event.target === authBackdrop) closeAuth(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && authBackdrop.classList.contains('open')) closeAuth(); });
+    function createOAuthState() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
+    }
+
+    function startFeishuLogin() {
+      const state = createOAuthState();
+      const callbackUrl = new URL(APP_CONFIG.feishuCallbackPath, window.location.origin);
+      sessionStorage.setItem('feishu_oauth_state', state);
+      sessionStorage.setItem('feishu_oauth_return_to', window.location.href);
+      const authorizeUrl = new URL('https://accounts.feishu.cn/open-apis/authen/v1/authorize');
+      authorizeUrl.searchParams.set('app_id', APP_CONFIG.feishuAppId);
+      authorizeUrl.searchParams.set('redirect_uri', callbackUrl.href);
+      authorizeUrl.searchParams.set('state', state);
+      window.location.assign(authorizeUrl.href);
+    }
+
+    feishuLogin.addEventListener('click', startFeishuLogin);
+    updateSendState();
+  </script>
+</body>
+</html>
+ || text[index] === '\\') ? answerMathTokenAt(text, index) : null;
+        if (math) {
+          const token = `\uE000C${tokens.length}\uE001`;
+          tokens.push(renderAnswerMath(math.tex, math.display, math.raw));
+          protectedText += token;
+          index = math.end;
+          continue;
+        }
+        protectedText += text[index++];
+      }
+      return escapeHtml(protectedText)
         .replace(/\*\*([^*]+)\*\*/gu, '<strong>$1</strong>')
-        .replace(/`([^`]+)`/gu, '<code>$1</code>');
+        .replace(/\uE000C(\d+)\uE001/gu, (_, index) => tokens[Number(index)] || '');
     }
 
     function renderMarkdown(markdown) {
