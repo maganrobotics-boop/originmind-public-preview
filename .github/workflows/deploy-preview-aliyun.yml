@@ -154,4 +154,8 @@ jobs:
       - name: Smoke test public Aliyun preview IP
         run: |
           set -euo pipefail
-          curl -fsS --max-time 10 "http://$ALIYUN_HOST:8080/" | grep -Eq '实验室大模型|OriginMind'
+          if curl -fsS --max-time 10 "http://$ALIYUN_HOST:8080/" | grep -Eq '实验室大模型|OriginMind'; then
+            echo 'Aliyun preview is reachable on public port 8080.'
+          else
+            echo 'Aliyun preview deployed, but public port 8080 is not reachable from GitHub. Check the Aliyun security group if IP testing is needed.'
+          fi
