@@ -343,16 +343,16 @@
       top: 12px;
       left: 50%;
       bottom: 185px;
-      width: calc(100% - 40px);
+      width: calc(100% - 24px);
       transform: translateX(-50%);
-      padding: 24px 8px 54px;
+      padding: 24px 24px 54px;
       overflow-y: auto;
       scrollbar-width: thin;
       scrollbar-color: #dedfe2 transparent;
     }
 
     .message { display: flex; gap: 12px; margin: 0 0 24px; animation: message-in .28s ease both; }
-    .message.assistant { justify-content: center; }
+    .message.assistant { justify-content: flex-start; }
     .message.user { justify-content: flex-end; }
 
     .assistant-mark {
@@ -372,7 +372,7 @@
     .mini-loader::after { bottom: 2px; background: linear-gradient(100deg,#6bb8fa,#9975ee); }
 
     .message-content { max-width: none; font-size: 15px; line-height: 1.76; color: #31353c; }
-    .message.assistant .message-content { width: calc(100% - 36px); }
+    .message.assistant .message-content { width: 100%; max-width: none; }
     .message.assistant .message-content { padding-top: 1px; }
     .message.user .message-content { padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: #f1f1f2; color: #25282e; }
     .message-content p { margin: 0; white-space: pre-wrap; }
@@ -408,7 +408,7 @@
     body.chat-active .empty-state { opacity: 0; visibility: hidden; transform: translateY(-22px); }
     body.chat-active .suggestions { opacity: 0; pointer-events: none; transform: translate(-50%,16px); }
     body.chat-active .conversation { opacity: 1; visibility: visible; }
-    body.chat-active .composer-wrap { top: auto; bottom: 27px; width: calc(100% - 40px); }
+    body.chat-active .composer-wrap { top: auto; bottom: 27px; width: calc(100% - 24px); }
     body.chat-active .composer-glow { opacity: .55; }
     body.chat-active .input-panel { min-height: 70px; padding-top: 13px; }
     body.chat-active .prompt-input { min-height: 42px; max-height: 92px; }
