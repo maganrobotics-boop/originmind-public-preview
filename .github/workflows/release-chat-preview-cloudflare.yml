@@ -1,6 +1,9 @@
 name: Release Chat Preview Cloudflare manually
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       confirmation:
@@ -16,7 +19,8 @@ jobs:
     if: >-
       github.repository != 'maganrobotics-boop/originmind-public-preview' ||
       github.ref != 'refs/heads/main' ||
-      inputs.confirmation != 'originmind-public-chat-preview:originmind-public-chat-preview:preview.omindos.ai'
+      (github.event_name == 'workflow_dispatch' &&
+        inputs.confirmation != 'originmind-public-chat-preview:originmind-public-chat-preview:preview.omindos.ai')
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
@@ -27,7 +31,8 @@ jobs:
     if: >-
       github.repository == 'maganrobotics-boop/originmind-public-preview' &&
       github.ref == 'refs/heads/main' &&
-      inputs.confirmation == 'originmind-public-chat-preview:originmind-public-chat-preview:preview.omindos.ai'
+      (github.event_name == 'push' ||
+        inputs.confirmation == 'originmind-public-chat-preview:originmind-public-chat-preview:preview.omindos.ai')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
@@ -42,7 +47,7 @@ jobs:
       CHAT_ADMIN_PASSWORD: ${{ secrets.CHAT_ADMIN_PASSWORD }}
       CHAT_APP_ENCRYPTION_KEY: ${{ secrets.CHAT_APP_ENCRYPTION_KEY }}
       CHAT_RATE_LIMIT_HMAC_KEY: ${{ secrets.CHAT_RATE_LIMIT_HMAC_KEY }}
-      CHAT_RELEASE_CONFIRM: ${{ inputs.confirmation }}
+      CHAT_RELEASE_CONFIRM: originmind-public-chat-preview:originmind-public-chat-preview:preview.omindos.ai
       CHAT_RELEASE_ID: ${{ github.sha }}-${{ github.run_attempt }}
       WRANGLER_LOG_SANITIZE: 'true'
       WRANGLER_SEND_METRICS: 'false'
