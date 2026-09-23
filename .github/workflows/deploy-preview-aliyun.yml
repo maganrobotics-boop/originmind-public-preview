@@ -32,6 +32,14 @@ on:
         required: true
         default: 'https://preview.omindos.ai'
         type: string
+      takeover_ip_root:
+        description: 'Temporarily serve preview on http://39.108.50.65/ instead of the Chinese homepage'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 permissions:
   contents: read
@@ -50,6 +58,7 @@ jobs:
       DEPLOY_PATH: ${{ inputs.deploy_path }}
       SERVER_NAME: ${{ inputs.server_name }}
       API_UPSTREAM: ${{ inputs.api_upstream }}
+      TAKEOVER_IP_ROOT: ${{ inputs.takeover_ip_root }}
       CI: '1'
     steps:
       - name: Mask password
@@ -106,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           sshpass -p "$ALIYUN_PASSWORD" ssh -o StrictHostKeyChecking=accept-new "$ALIYUN_USER@$ALIYUN_HOST" \
-            "DEPLOY_PATH='$DEPLOY_PATH' SERVER_NAME='$SERVER_NAME' API_UPSTREAM='$API_UPSTREAM' bash -s" <<'REMOTE'
+            "DEPLOY_PATH='$DEPLOY_PATH' SERVER_NAME='$SERVER_NAME' API_UPSTREAM='$API_UPSTREAM' ALIYUN_HOST='$ALIYUN_HOST' TAKEOVER_IP_ROOT='$TAKEOVER_IP_ROOT' bash -s" <<'REMOTE'
           set -euo pipefail
           if ! command -v nginx >/dev/null 2>&1; then
             if command -v apt-get >/dev/null 2>&1; then
@@ -145,6 +154,32 @@ jobs:
               }
           }
           NGINX
+          if [ "$TAKEOVER_IP_ROOT" = "true" ]; then
+            cat >/etc/nginx/conf.d/000-originmind-preview-ip-root.conf <<NGINX
+          server {
+              listen 80;
+              server_name ${ALIYUN_HOST};
+              root ${DEPLOY_PATH};
+              index index.html;
+
+              location /api/ {
+                  proxy_pass ${API_UPSTREAM}/api/;
+                  proxy_ssl_server_name on;
+                  proxy_set_header Host \$proxy_host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_http_version 1.1;
+              }
+
+              location / {
+                  try_files \$uri \$uri/ /index.html;
+              }
+          }
+          NGINX
+          else
+            rm -f /etc/nginx/conf.d/000-originmind-preview-ip-root.conf
+          fi
           if command -v ufw >/dev/null 2>&1; then
             ufw allow 80/tcp || true
             ufw allow 8080/tcp || true
